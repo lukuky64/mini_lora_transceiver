@@ -5,7 +5,7 @@ SerialCom::SerialCom() {}
 void SerialCom::init(unsigned long baud) {
   m_baud = baud;
   COMM_INTERFACE.begin(m_baud);
-  ESP_LOGI(TAG, "Serial communication initialized at %lu baud", m_baud);
+  ESP_LOGI(TAG, "Serial communication initialised at %lu baud", m_baud);
 }
 
 bool SerialCom::getData(char *buffer, const size_t maxBuffer, int *_rxIndex) {

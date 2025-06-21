@@ -5,35 +5,94 @@
 // 1. If two devices transmit at the exact same time, neither message will be
 // received
 
-LoRaCom::LoRaCom() {}
+static LoRaCom *instance = nullptr;
 
-void LoRaCom::begin(uint8_t CLK, uint8_t MISO, int8_t MOSI, uint8_t csPin,
-                    uint8_t intPin, float freqMHz, int8_t power) {
-  RH_SPI.setPins(MISO, MOSI, CLK);
-  rf95 = new RH_RF95(csPin, intPin, RH_SPI);
-  INT_PIN = intPin;
-  CS_PIN = csPin;
-  RF95_FREQ = freqMHz;
+LoRaCom::LoRaCom() {
+  ESP_LOGI(TAG, "LoRaCom constructor called");
+  instance = this;
+}
 
-  if (!rf95->init()) {
-    ESP_LOGE(TAG, "LoRa radio init failed");
-    while (1);
+#ifdef FAKE_LORA
+bool LoRaCom::begin(uint8_t CLK, uint8_t MISO, int8_t MOSI, uint8_t csPin,
+                    uint8_t intPin, int8_t RST, int8_t BUSY_, float freqMHz,
+                    int8_t power) {
+  // This is a fake LoRa implementation for testing purposes
+  ESP_LOGI(TAG, "Fake LoRaCom begin called with frequency: %.2f MHz", freqMHz);
+  return true;  // Simulate successful initialization
+}
+
+void LoRaCom::sendMessage(const char *inputmsg) {
+  if (inputmsg[0] != '\0') {  // Check the message is not empty
+    ESP_LOGI(TAG, "Transmitting [%s]", inputmsg);
+    int state = radio->transmit(inputmsg);  // Start the transmission process
+  }
+}
+
+// return message
+String LoRaCom::checkForReply() {
+  String message = "";
+
+  if (receivedFlag) {
+    receivedFlag = false;
+    message = "Fake reply message";
+  }
+  return message;
+}
+
+float LoRaCom::getRssi() { return -40.0; }
+
+bool LoRaCom::getData(char *buffer, const size_t bufferSize, int *_rxIndex) {
+  String message = checkForReply();
+  if (message.length() > 0) {
+    // Check if the message fits in the buffer
+    if (message.length() < bufferSize) {
+      // Copy the message to the buffer
+      strncpy(buffer, message.c_str(), bufferSize - 1);
+      buffer[bufferSize - 1] = '\0';  // Ensure null-termination
+      *_rxIndex =
+          message.length();  // Update the index with the length of the message
+      return true;           // Data received successfully
+    } else {
+      ESP_LOGW(TAG, "Buffer overflow: Message too long");
+    }
+  }
+  return false;
+}
+
+#else
+bool LoRaCom::begin(uint8_t CLK, uint8_t MISO, int8_t MOSI, uint8_t csPin,
+                    uint8_t intPin, int8_t RST, int8_t BUSY_, float freqMHz,
+                    int8_t power) {
+  //
+  radio = new SX1262(new Module(csPin, intPin, RST, BUSY_));
+
+  // carrier frequency:           915.0 MHz
+  // bandwidth:                   7.8 kHz
+  // spreading factor:            12
+  // coding rate:                 5
+  // sync word:                   0x34 (public network/LoRaWAN)
+  // output power:                22 dBm
+  // preamble length:             20 symbols
+  int state = radio->begin(freqMHz, 7.8, 12, 5, 0x34, power, 20);
+
+  if (state == RADIOLIB_ERR_NONE) {
+    ESP_LOGI(TAG, "LoRaCom begin called with frequency: %.2f MHz", freqMHz);
+
+    ESP_LOGI(TAG, "LoRa radio init successful!");
+  } else {
+    ESP_LOGE(TAG, "LoRa Initialisation failed with code: %d", state);
+    return false;
   }
 
-  rf95->setFrequency(RF95_FREQ);
-  // If using RFM95/96/97/98 modules which uses the PA_BOOST transmitter pin,
-  // then you can set transmitter powers from 5 to 20 dBm:
-  rf95->setTxPower(power,
-                   false);      // higher = longer range. !!! was 20, but if we
-                                // can get away with lower then that is better
-  rf95->setSpreadingFactor(7);  // 6-12 -> higher = longer range
-  // rf95->setSignalBandwidth(7800); // 7.8k to 500k. lower = longer range
-  // rf95->setCodingRate4(8);        // 5-8 higher = longer range
-  // rf95->setPreambleLength(1024);  // 6-65535 higher = longer range
+  radio->setPacketReceivedAction(setFlag);
+  return true;
+}
 
-  // modem config choice
-  // rf95->setModemConfig(RH_RF95::Bw31_25Cr48Sf512); // slow and long range
-  ESP_LOGI(TAG, "LoRa radio init successful!");
+void LoRaCom::setFlag(void) {
+  if (instance) {
+    instance->receivedFlag = true;
+    // instance->operationDone = true;
+  }
 }
 
 // bool LoRaCom::createMessage() {
@@ -75,37 +134,38 @@ void LoRaCom::begin(uint8_t CLK, uint8_t MISO, int8_t MOSI, uint8_t csPin,
 void LoRaCom::sendMessage(const char *inputmsg) {
   if (inputmsg[0] != '\0') {  // Check the message is not empty
     ESP_LOGI(TAG, "Transmitting [%s]", inputmsg);
-    rf95->send((uint8_t *)inputmsg, strlen(inputmsg));
-    vTaskDelay(pdMS_TO_TICKS(10));
-    rf95->waitPacketSent();
-    vTaskDelay(pdMS_TO_TICKS(10));
+    int state = radio->transmit(inputmsg);  // Start the transmission process
+
+    if (state == RADIOLIB_ERR_NONE) {
+      return;
+    } else {
+      ESP_LOGE(TAG, "LoRa send failed with code: %d", state);
+    }
   }
 }
 
 // return message
 String LoRaCom::checkForReply() {
-  String message =
-      "";  // Initialize an empty String to store the received message
-  if (rf95->available()) {
-    uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
-    uint8_t len = sizeof(buf);
-    if (rf95->recv(buf, &len)) {
-      buf[len] = '\0';                // Ensure null-termination
-      message = String((char *)buf);  // Convert buf to a String and store it
+  String message = "";
 
-      // ESP_LOGI(TAG, "Received [%s]", message.c_str());
-      // ESP_LOGI(TAG, "\t RSSI [%d]", rf95->lastRssi());
-      // ESP_LOGI(TAG, "\t SNR [%d]", rf95->lastSNR());
+  if (receivedFlag) {
+    receivedFlag = false;
+    int state = radio->readData(message);
+
+    if (state == RADIOLIB_ERR_NONE) {
+      ESP_LOGI(TAG, "LoRa receive successful!");
     } else {
-      ESP_LOGE(TAG, "Receive failed");
+      ESP_LOGE(TAG, "LoRa receive failed with code: %d", state);
     }
+    // ESP_LOGI(TAG, "\t RSSI [%d]", rf95->lastRssi());
+    // ESP_LOGI(TAG, "\t SNR [%d]", rf95->lastSNR());
   }
-  return message;  // Return the message received or an empty string if no
-                   // message was received
+
+  return message;
 }
 
-int16_t LoRaCom::getRssi() {
-  return rf95->lastRssi();  // Return the last received signal strength
+float LoRaCom::getRssi() {
+  return radio->getRSSI();  // Return the last received signal strength
 }
 
 bool LoRaCom::getData(char *buffer, const size_t bufferSize, int *_rxIndex) {
@@ -125,3 +185,4 @@ bool LoRaCom::getData(char *buffer, const size_t bufferSize, int *_rxIndex) {
   }
   return false;
 }
+#endif

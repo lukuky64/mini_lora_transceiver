@@ -2,14 +2,15 @@
 
 Control::Control() {
   m_serialCom = new SerialCom();  // Initialize SerialCom instance
-  // m_LoRaCom = new LoRaCom();      // Initialize LoRaCom instance
+  m_LoRaCom = new LoRaCom();      // Initialize LoRaCom instance
   // Constructor implementation
 }
 
 void Control::setup() {
   m_serialCom->init(115200);  // Initialize serial communication
-  //   m_LoRaCom.begin(SPI_CLK_RF, SPI_MISO_RF, SPI_MOSI_RF, SPI_CS_RF, RF_DIO,
-  //                   915.0f, 20);
+
+  m_LoRaCom->begin(SPI_CLK_RF, SPI_MISO_RF, SPI_MOSI_RF, SPI_CS_RF, RF_DIO,
+                   RF_RST, RF_BUSY, 915.0f, 22);
 
   ESP_LOGI(TAG, "Control setup complete");
 }
@@ -36,9 +37,9 @@ void Control::begin() {
       [](void *param) { static_cast<Control *>(param)->serialDataTask(); },
       "SerialDataTask", 8192, this, 1, &SerialTaskHandle);
 
-  //   xTaskCreate(
-  //       [](void *param) { static_cast<Control *>(param)->loRaDataTask(); },
-  //       "LoRaDataTask", 8192, this, 1, &LoRaTaskHandle);
+  xTaskCreate(
+      [](void *param) { static_cast<Control *>(param)->loRaDataTask(); },
+      "LoRaDataTask", 8192, this, 1, &LoRaTaskHandle);
 
   xTaskCreate([](void *param) { static_cast<Control *>(param)->statusTask(); },
               "RssiTask", 8192, this, 1, &RSSTaskHandle);
@@ -84,16 +85,16 @@ void Control::statusTask() {
   pinMode(LED_PIN, OUTPUT);  // Set LED pin as output
   unsigned long lastMillis = 0;
   while (true) {
-    // if (millis() - lastMillis >= RSSI_interval) {
-    //   lastMillis = millis();
-    //   int16_t rssi = m_LoRaCom.getRssi();
-    //   if (rssi != -1) {  // Check if the RSSI value is valid
-    //     String msg = "DOWNLINK_RSSI = " + String(rssi) + "\n";
-    //     m_serialCom->sendData(msg.c_str());
-    //   }
-    // }
+    if (millis() - lastMillis >= RSSI_interval) {
+      lastMillis = millis();
+      float rssi = m_LoRaCom->getRssi();
+      if (rssi != -1) {  // Check if the RSSI value is valid
+        String msg = "DOWNLINK_RSSI = " + String(rssi) + "\n";
+        m_serialCom->sendData(msg.c_str());
+      }
+    }
     digitalWrite(LED_PIN, !digitalRead(LED_PIN));
-    ESP_LOGI(TAG, "LED toggled");
+    ESP_LOGD(TAG, "LED toggled");
     vTaskDelay(pdMS_TO_TICKS(status_Interval));
   }
 }
