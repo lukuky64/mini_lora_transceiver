@@ -2,12 +2,17 @@
 
 #include <Arduino.h>
 
+#include <cstring>
+
 #include "LoRaCom.hpp"
 #include "SerialCom.hpp"
+#include "commander.hpp"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "pin_defs.hpp"
+
+#define c_cmp(a, b) (strcmp(a, b) == 0)
 
 class Control {
  public:
@@ -18,6 +23,7 @@ class Control {
  private:
   SerialCom *m_serialCom;
   LoRaCom *m_LoRaCom;
+  Commander *m_commander;
 
   unsigned long serial_Interval = 100;
   unsigned long lora_Interval = 100;
@@ -33,5 +39,5 @@ class Control {
   void serialDataTask();
   void loRaDataTask();
   void statusTask();
-  void interpretMessage(const char *buffer, int rxIndex);
+  void interpretMessage(char *buffer);
 };

@@ -1,8 +1,9 @@
 #include "control.hpp"
 
 Control::Control() {
-  m_serialCom = new SerialCom();  // Initialize SerialCom instance
-  m_LoRaCom = new LoRaCom();      // Initialize LoRaCom instance
+  m_serialCom = new SerialCom();             // Initialize SerialCom instance
+  m_LoRaCom = new LoRaCom();                 // Initialize LoRaCom instance
+  m_commander = new Commander(m_serialCom);  // Initialize Commander instance
   // Constructor implementation
 }
 
@@ -55,7 +56,7 @@ void Control::serialDataTask() {
     // Check for incoming data from the serial interface
     if (m_serialCom->getData(buffer, sizeof(buffer), &rxIndex)) {
       ESP_LOGI(TAG, "Received: %s", buffer);  // Log the received data
-      interpretMessage(buffer, rxIndex);      // Process the received message
+      interpretMessage(buffer);               // Process the message
       // clear the buffer for the next message
       memset(buffer, 0, sizeof(buffer));
       rxIndex = 0;  // Reset the index
@@ -71,10 +72,15 @@ void Control::loRaDataTask() {
   while (true) {
     // Check for incoming data from the LoRa interface
     if (m_LoRaCom->getData(buffer, sizeof(buffer), &rxIndex)) {
+      ESP_LOGI(TAG, "Received: %s", buffer);  // Log the received data
+      interpretMessage(buffer);               // Process the message
       // Send the received data over serial
       m_serialCom->sendData("Received: <");
       m_serialCom->sendData(buffer);
       m_serialCom->sendData(">\n");
+
+      memset(buffer, 0, sizeof(buffer));
+      rxIndex = 0;  // Reset the index
     }
 
     vTaskDelay(pdMS_TO_TICKS(lora_Interval));
@@ -87,7 +93,7 @@ void Control::statusTask() {
   while (true) {
     if (millis() - lastMillis >= RSSI_interval) {
       lastMillis = millis();
-      float rssi = m_LoRaCom->getRssi();
+      int32_t rssi = m_LoRaCom->getRssi();
       if (rssi != -1) {  // Check if the RSSI value is valid
         String msg = "DOWNLINK_RSSI = " + String(rssi) + "\n";
         m_serialCom->sendData(msg.c_str());
@@ -99,7 +105,13 @@ void Control::statusTask() {
   }
 }
 
-void Control::interpretMessage(const char *buffer, int rxIndex) {
-  // have a list of commands and switch case statement
-  // m_LoRaCom.sendMessage(buffer);
+void Control::interpretMessage(char *buffer) {
+  char *token = m_commander->readAndRemove(&buffer);
+
+  if (c_cmp(token, "command")) {
+    ESP_LOGI(TAG, "Processing command: %s", buffer);
+    m_commander->checkCommand(buffer);
+  } else if (c_cmp(token, "data")) {
+    // do nothing... I think
+  }
 }

@@ -39,7 +39,7 @@ String LoRaCom::checkForReply() {
   return message;
 }
 
-float LoRaCom::getRssi() { return -40.0; }
+int32_t LoRaCom::getRssi() { return -40.0; }
 
 bool LoRaCom::getData(char *buffer, const size_t bufferSize, int *_rxIndex) {
   String message = checkForReply();
@@ -164,7 +164,7 @@ String LoRaCom::checkForReply() {
   return message;
 }
 
-float LoRaCom::getRssi() {
+int32_t LoRaCom::getRssi() {
   return radio->getRSSI();  // Return the last received signal strength
 }
 
