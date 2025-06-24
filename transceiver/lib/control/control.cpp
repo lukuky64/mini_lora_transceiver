@@ -1,9 +1,10 @@
 #include "control.hpp"
 
 Control::Control() {
-  m_serialCom = new SerialCom();             // Initialize SerialCom instance
-  m_LoRaCom = new LoRaCom();                 // Initialize LoRaCom instance
-  m_commander = new Commander(m_serialCom);  // Initialize Commander instance
+  m_serialCom = new SerialCom();  // Initialize SerialCom instance
+  m_LoRaCom = new LoRaCom();      // Initialize LoRaCom instance
+  m_commander =
+      new Commander(m_serialCom, m_LoRaCom);  // Initialize Commander instance
   // Constructor implementation
 }
 
@@ -29,8 +30,8 @@ void Control::begin() {
     vTaskDelete(LoRaTaskHandle);
   }
 
-  if (RSSTaskHandle != nullptr) {
-    vTaskDelete(RSSTaskHandle);
+  if (StatusTaskHandle != nullptr) {
+    vTaskDelete(StatusTaskHandle);
   }
 
   // Create new tasks for serial data handling, LoRa data handling, and status
@@ -43,9 +44,24 @@ void Control::begin() {
       "LoRaDataTask", 8192, this, 1, &LoRaTaskHandle);
 
   xTaskCreate([](void *param) { static_cast<Control *>(param)->statusTask(); },
-              "RssiTask", 8192, this, 1, &RSSTaskHandle);
+              "StatusTask", 8192, this, 1, &StatusTaskHandle);
 
-  ESP_LOGI(TAG, "Control begun!");
+  xTaskCreate(
+      [](void *param) { static_cast<Control *>(param)->heartBeatTask(); },
+      "SerialDataTask", 512, this, 1, &heartBeatTaskHandle);
+
+  ESP_LOGI(TAG, "Control begun!\n");
+
+  ESP_LOGI(TAG, "Type <help> for a list of commands");
+}
+
+void Control::heartBeatTask() {
+  pinMode(LED_PIN, OUTPUT);  // Set LED pin as output
+  while (true) {
+    digitalWrite(LED_PIN, !digitalRead(LED_PIN));
+    ESP_LOGD(TAG, "LED toggled");
+    vTaskDelay(pdMS_TO_TICKS(heartBeat_Interval));
+  }
 }
 
 void Control::serialDataTask() {
@@ -61,7 +77,9 @@ void Control::serialDataTask() {
       memset(buffer, 0, sizeof(buffer));
       rxIndex = 0;  // Reset the index
     }
-    vTaskDelay(pdMS_TO_TICKS(serial_Interval));  // Delay to avoid busy-waiting
+    // vTaskDelay(pdMS_TO_TICKS(serial_Interval));  // Delay to avoid
+    // busy-waiting
+    yield();  // Yield to allow other tasks to run
   }
 }
 
@@ -83,35 +101,71 @@ void Control::loRaDataTask() {
       rxIndex = 0;  // Reset the index
     }
 
-    vTaskDelay(pdMS_TO_TICKS(lora_Interval));
+    // vTaskDelay(pdMS_TO_TICKS(lora_Interval));
+    yield();  // Yield to allow other tasks to run
   }
 }
 
 void Control::statusTask() {
   pinMode(LED_PIN, OUTPUT);  // Set LED pin as output
-  unsigned long lastMillis = 0;
   while (true) {
-    if (millis() - lastMillis >= RSSI_interval) {
-      lastMillis = millis();
-      int32_t rssi = m_LoRaCom->getRssi();
-      if (rssi != -1) {  // Check if the RSSI value is valid
-        String msg = "DOWNLINK_RSSI = " + String(rssi) + "\n";
-        m_serialCom->sendData(msg.c_str());
-      }
-    }
-    digitalWrite(LED_PIN, !digitalRead(LED_PIN));
-    ESP_LOGD(TAG, "LED toggled");
+    int32_t rssi = m_LoRaCom->getRssi();
+    String msg = String("status ") + "ID:" + deviceID +
+                 " RSSI:" + String(rssi) +
+                 " batteryLevel:" + String(m_batteryLevel) + " mode:" + m_mode +
+                 " status:" + m_status;
+    m_serialCom->sendData(((msg + "\n").c_str()));
+    m_LoRaCom->sendMessage(msg.c_str());
+
     vTaskDelay(pdMS_TO_TICKS(status_Interval));
   }
 }
 
-void Control::interpretMessage(char *buffer) {
-  char *token = m_commander->readAndRemove(&buffer);
+void Control::interpretMessage(const char *buffer) {
+  m_commander->setCommand(buffer);  // Set the command in the commander
+  char *token = m_commander->readAndRemove();
+
+  // eg: "command update gain 22"
+  // eg: "status <deviceID> <RSSI> <batteryLevel> <mode> <status>"
+  // eg: "data <payload>"
 
   if (c_cmp(token, "command")) {
-    ESP_LOGI(TAG, "Processing command: %s", buffer);
-    m_commander->checkCommand(buffer);
+    // send to other devices to sync parameters
+    m_LoRaCom->sendMessage(buffer);
+    // should probably wait for a success reply before changing THIS device
+
+    ESP_LOGD(TAG, "Processing command: %s", buffer);
+    m_commander->checkCommand();
   } else if (c_cmp(token, "data")) {
-    // do nothing... I think
+    processData(buffer);
+  } else if (c_cmp(token, "status")) {
+    processData(buffer);
+  } else if (c_cmp(token, "help")) {
+    ESP_LOGI(TAG,
+             "Message format: <type> <data1> <data2> ...\n"
+             "Valid types:\n"
+             "  - command: for device control\n"
+             "  - data: for data transmission\n"
+             "  - message: for standard messages\n"
+             "  - help: for displaying help information");
   }
+}
+
+void Control::processData(const char *buffer) {
+  // Process the data message
+  ESP_LOGD(TAG, "Processing data");
+
+  // remove the "data" prefix
+  const char *dataStart = strchr(buffer, ' ') + 1;  // Find the first space
+  if (dataStart == nullptr) {
+    ESP_LOGE(TAG, "Invalid data format: %s", buffer);
+    return;  // Invalid format, return early
+  }
+
+  m_serialCom->sendData(buffer);  // Send the data part over serial
+  m_serialCom->sendData("\n");
+
+  // save dataStart to flash
+
+  ESP_LOGI(TAG, "Data processing complete");
 }

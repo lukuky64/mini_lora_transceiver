@@ -19,6 +19,11 @@ class LoRaCom {
   String checkForReply();
   int32_t getRssi();
 
+  bool setOutGain(int8_t gain);
+  bool setFrequency(float freqMHz);
+  bool setSpreadingFactor(uint8_t spreadingFactor);
+  bool setBandwidth(float bandwidth);
+
   bool getData(char *buffer, const size_t bufferSize, int *_rxIndex);
 
  private:

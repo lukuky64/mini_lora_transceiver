@@ -24,7 +24,6 @@ bool LoRaCom::begin(uint8_t CLK, uint8_t MISO, int8_t MOSI, uint8_t csPin,
 void LoRaCom::sendMessage(const char *inputmsg) {
   if (inputmsg[0] != '\0') {  // Check the message is not empty
     ESP_LOGI(TAG, "Transmitting [%s]", inputmsg);
-    int state = radio->transmit(inputmsg);  // Start the transmission process
   }
 }
 
@@ -57,6 +56,59 @@ bool LoRaCom::getData(char *buffer, const size_t bufferSize, int *_rxIndex) {
     }
   }
   return false;
+}
+
+bool LoRaCom::setOutGain(int8_t gain) {
+  // value should be bewteen -9 and 22 dBm
+  if (gain < -9 || gain > 22) {
+    ESP_LOGE(TAG, "Invalid gain value: %d. Gain must be between -9 and 22 dBm",
+             gain);
+    return false;
+  } else {
+    ESP_LOGI(TAG, "Gain set to %d", gain);
+    return true;
+  }
+}
+
+bool LoRaCom::setFrequency(float freqMHz) {
+  // Simulate setting frequency
+
+  if (freqMHz < 100.0f || freqMHz > 1000.0f) {
+    ESP_LOGE(TAG,
+             "Invalid frequency: %.2f MHz. Frequency must be between 100.0 "
+             "and 1000.0 MHz",
+             freqMHz);
+    return false;
+  }
+
+  ESP_LOGI(TAG, "Frequency set to %.2f MHz", freqMHz);
+  return true;  // Simulate successful frequency setting
+}
+
+bool LoRaCom::setSpreadingFactor(uint8_t spreadingFactor) {
+  // Simulate setting spreading factor
+  if (spreadingFactor < 5 || spreadingFactor > 12) {
+    ESP_LOGE(TAG,
+             "Invalid spreading factor: %d. Spreading factor must be between 5 "
+             "and 12",
+             spreadingFactor);
+    return false;
+  }
+  ESP_LOGI(TAG, "Spreading factor set to %d", spreadingFactor);
+  return true;  // Simulate successful spreading factor setting
+}
+
+bool LoRaCom::setBandwidth(float bandwidth) {
+  // Simulate setting bandwidth
+  if (bandwidth < 0 || bandwidth > 510) {
+    ESP_LOGE(TAG,
+             "Invalid bandwidth: %.2f kHz. Bandwidth must be between 0 and 510 "
+             "kHz",
+             bandwidth);
+    return false;
+  }
+  ESP_LOGI(TAG, "Bandwidth set to %.2f kHz", bandwidth);
+  return true;  // Simulate successful spreading factor setting
 }
 
 #else
@@ -185,4 +237,53 @@ bool LoRaCom::getData(char *buffer, const size_t bufferSize, int *_rxIndex) {
   }
   return false;
 }
+
+bool LoRaCom::setOutGain(int8_t gain) {
+  // value should be bewteen -9 and 22 dBm
+  int state = radio->setOutputPower(gain);
+  if (state == RADIOLIB_ERR_NONE) {
+    ESP_LOGI(TAG, "Gain set to %d", gain);
+    return true;
+  } else {
+    ESP_LOGE(TAG, "Failed to set gain with code: %d", state);
+    return false;
+  }
+}
+
+bool LoRaCom::setFrequency(float freqMHz) {
+  // Set the frequency of the radio
+  int state = radio->setFrequency(freqMHz);
+  if (state == RADIOLIB_ERR_NONE) {
+    ESP_LOGI(TAG, "Frequency set to %.2f MHz", freqMHz);
+    return true;
+  } else {
+    ESP_LOGE(TAG, "Failed to set frequency with code: %d", state);
+    return false;
+  }
+}
+
+bool LoRaCom::setSpreadingFactor(uint8_t spreadingFactor) {
+  // Set the spreading factor of the radio
+  int state = radio->setSpreadingFactor(spreadingFactor);
+  if (state == RADIOLIB_ERR_NONE) {
+    ESP_LOGI(TAG, "Spreading factor set to %d", spreadingFactor);
+    return true;
+  } else {
+    ESP_LOGE(TAG, "Failed to set spreading factor with code: %d", state);
+    return false;
+  }
+}
+
+bool LoRaCom::setBandwidth(float bandwidth) {
+  // Set the spreading factor of the radio
+  int state = radio->setBandwidth(bandwidth);
+  if (state == RADIOLIB_ERR_NONE) {
+    ESP_LOGI(TAG, "Spreading factor set to %.2f kHz", bandwidth);
+    return true;
+  } else {
+    ESP_LOGE(TAG, "Failed to set spreading factor with code: %d", state);
+    return false;
+  }
+}
+
 #endif
