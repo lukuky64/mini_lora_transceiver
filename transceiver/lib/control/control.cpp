@@ -5,7 +5,8 @@ Control::Control() {
   m_LoRaCom = new LoRaCom();      // Initialize LoRaCom instance
   m_commander =
       new Commander(m_serialCom, m_LoRaCom);  // Initialize Commander instance
-  // Constructor implementation
+
+  m_saveFlash = new SaveFlash(m_serialCom);  // Initialize SaveFlash instance
 }
 
 void Control::setup() {
@@ -13,6 +14,8 @@ void Control::setup() {
 
   m_LoRaCom->begin(SPI_CLK_RF, SPI_MISO_RF, SPI_MOSI_RF, SPI_CS_RF, RF_DIO,
                    RF_RST, RF_BUSY, 915.0f, 22);
+
+  m_saveFlash->begin();  // Initialize flash storage
 
   ESP_LOGI(TAG, "Control setup complete");
 }
@@ -133,7 +136,6 @@ void Control::interpretMessage(const char *buffer) {
     // send to other devices to sync parameters
     m_LoRaCom->sendMessage(buffer);
     // should probably wait for a success reply before changing THIS device
-
     ESP_LOGD(TAG, "Processing command: %s", buffer);
     m_commander->checkCommand();
   } else if (c_cmp(token, "data")) {
@@ -144,10 +146,17 @@ void Control::interpretMessage(const char *buffer) {
     ESP_LOGI(TAG,
              "Message format: <type> <data1> <data2> ...\n"
              "Valid types:\n"
+             "  - flash: for flash read and save\n"
              "  - command: for device control\n"
              "  - data: for data transmission\n"
              "  - message: for standard messages\n"
+             "  - flash: to print and auto erase logs\n"
+             "  - status: for device status\n"
              "  - help: for displaying help information");
+  } else if (c_cmp(token, "flash")) {
+    m_saveFlash->readFile();
+    m_saveFlash->removeFile();  // Update the flash storage
+    m_saveFlash->begin();       // Reinitialize the flash storage
   }
 }
 
@@ -166,6 +175,7 @@ void Control::processData(const char *buffer) {
   m_serialCom->sendData("\n");
 
   // save dataStart to flash
+  m_saveFlash->writeData((dataStart + String("\n")).c_str());
 
   ESP_LOGI(TAG, "Data processing complete");
 }

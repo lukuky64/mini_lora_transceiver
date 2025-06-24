@@ -11,6 +11,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "pin_defs.hpp"
+#include "saveFlash.hpp"
 
 #define c_cmp(a, b) (strcmp(a, b) == 0)
 
@@ -48,6 +49,7 @@ class Control {
   SerialCom *m_serialCom;
   LoRaCom *m_LoRaCom;
   Commander *m_commander;
+  SaveFlash *m_saveFlash;
 
   unsigned long serial_Interval = 100;
   unsigned long lora_Interval = 100;
