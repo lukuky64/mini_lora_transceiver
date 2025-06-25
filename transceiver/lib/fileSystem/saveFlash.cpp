@@ -22,7 +22,73 @@ void SaveFlash::begin() {
   m_initialised = true;
 
   updateStorage();
+  newLog();
+}
 
+void SaveFlash::newLog() {
+  if (!m_initialised) {
+    ESP_LOGW(TAG, "File system not initialised");
+    return;
+  }
+
+  // Check if file exists and get its size
+  File file = LittleFS.open(fileName, FILE_READ);
+  if (!file) {
+    // File doesn't exist, create it with "New Log"
+    ESP_LOGI(TAG, "File doesn't exist, creating new log");
+    writeData("New Log\n");
+    return;
+  }
+
+  // Check if file is empty
+  size_t fileSize = file.size();
+  if (fileSize == 0) {
+    file.close();
+    ESP_LOGI(TAG, "File is empty, adding new log");
+    writeData("New Log\n");
+    return;
+  }
+
+  // Read the last line efficiently by seeking near the end
+  String lastLine;
+  file.seek(0, SeekEnd);  // Go to end of file
+
+  // Read backwards to find the last line (simple approach: read last 50 bytes)
+  size_t readSize = min(fileSize, (size_t)50);
+  file.seek(fileSize - readSize);
+
+  String endContent = file.readString();
+  file.close();
+  // Extract the last line
+  int lastNewlineIndex = endContent.lastIndexOf('\n');
+  if (lastNewlineIndex != -1) {
+    // If there's content after the last newline, that's the last line
+    if (lastNewlineIndex < endContent.length() - 1) {
+      lastLine = endContent.substring(lastNewlineIndex + 1);
+    } else {
+      // The file ends with a newline, so find the second-to-last newline
+      String beforeLastNewline = endContent.substring(0, lastNewlineIndex);
+      int secondLastNewlineIndex = beforeLastNewline.lastIndexOf('\n');
+      if (secondLastNewlineIndex != -1) {
+        lastLine = beforeLastNewline.substring(secondLastNewlineIndex + 1);
+      } else {
+        // No second newline found, the entire content before last newline is
+        // the last line
+        lastLine = beforeLastNewline;
+      }
+    }
+  } else {
+    lastLine = endContent;  // No newline found, entire content is the last line
+  }
+
+  // Check if last line is already "New Log"
+  lastLine.trim();  // Remove any whitespace
+  if (lastLine.equals("New Log")) {
+    ESP_LOGI(TAG, "Last line already 'New Log', skipping");
+    return;
+  }
+
+  ESP_LOGI(TAG, "Adding new log entry");
   writeData("New Log\n");
 }
 

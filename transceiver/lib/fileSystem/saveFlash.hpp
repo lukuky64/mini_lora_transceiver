@@ -8,6 +8,7 @@ class SaveFlash {
  public:
   SaveFlash(SerialCom *serialCom);
   void begin();
+  void newLog();
   void writeData(const String &data);
   void removeFile();
   void readFile();
