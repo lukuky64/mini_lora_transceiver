@@ -12,8 +12,25 @@ Control::Control() {
 void Control::setup() {
   m_serialCom->init(115200);  // Initialize serial communication
 
-  m_LoRaCom->begin(SPI_CLK_RF, SPI_MISO_RF, SPI_MOSI_RF, SPI_CS_RF, RF_DIO,
-                   RF_RST, RF_BUSY, 915.0f, 22);
+  ESP_LOGI(TAG, "line 15");
+
+  bool loraSuccess =
+      m_LoRaCom->begin(SPI_CLK_RF, SPI_MISO_RF, SPI_MOSI_RF, SPI_CS_RF, RF_DIO,
+                       RF_RST, RF_BUSY, 915.0f, 22);
+
+  if (!loraSuccess) {
+    ESP_LOGE(TAG,
+             "LoRa initialization FAILED! Check your hardware connections.");
+    ESP_LOGE(TAG,
+             "Pin assignments: CLK=%d, MISO=%d, MOSI=%d, CS=%d, INT=%d, "
+             "RST=%d, BUSY=%d",
+             SPI_CLK_RF, SPI_MISO_RF, SPI_MOSI_RF, SPI_CS_RF, RF_DIO, RF_RST,
+             RF_BUSY);
+  } else {
+    ESP_LOGI(TAG, "LoRa initialized successfully!");
+  }
+
+  ESP_LOGI(TAG, "line 20");
 
   m_saveFlash->begin();  // Initialize flash storage
 
@@ -38,20 +55,21 @@ void Control::begin() {
   }
 
   // Create new tasks for serial data handling, LoRa data handling, and status
+  // Higher priority = higher number, priorities should be 1-3 for user tasks
   xTaskCreate(
       [](void *param) { static_cast<Control *>(param)->serialDataTask(); },
-      "SerialDataTask", 8192, this, 1, &SerialTaskHandle);
+      "SerialDataTask", 4096, this, 2, &SerialTaskHandle);
 
   xTaskCreate(
       [](void *param) { static_cast<Control *>(param)->loRaDataTask(); },
-      "LoRaDataTask", 8192, this, 1, &LoRaTaskHandle);
+      "LoRaDataTask", 4096, this, 2, &LoRaTaskHandle);
 
   xTaskCreate([](void *param) { static_cast<Control *>(param)->statusTask(); },
-              "StatusTask", 8192, this, 1, &StatusTaskHandle);
+              "StatusTask", 4096, this, 1, &StatusTaskHandle);
 
   xTaskCreate(
       [](void *param) { static_cast<Control *>(param)->heartBeatTask(); },
-      "SerialDataTask", 512, this, 1, &heartBeatTaskHandle);
+      "HeartBeatTask", 1024, this, 1, &heartBeatTaskHandle);
 
   ESP_LOGI(TAG, "Control begun!\n");
 
@@ -80,9 +98,9 @@ void Control::serialDataTask() {
       memset(buffer, 0, sizeof(buffer));
       rxIndex = 0;  // Reset the index
     }
-    // vTaskDelay(pdMS_TO_TICKS(serial_Interval));  // Delay to avoid
-    // busy-waiting
-    yield();  // Yield to allow other tasks to run
+
+    // Use a small delay instead of yield() to be more cooperative
+    vTaskDelay(pdMS_TO_TICKS(10));  // 10ms delay allows other tasks to run
   }
 }
 
@@ -104,22 +122,31 @@ void Control::loRaDataTask() {
       rxIndex = 0;  // Reset the index
     }
 
-    // vTaskDelay(pdMS_TO_TICKS(lora_Interval));
-    yield();  // Yield to allow other tasks to run
+    // Use a small delay instead of yield() to be more cooperative
+    vTaskDelay(pdMS_TO_TICKS(
+        50));  // 50ms delay - LoRa doesn't need to be checked as frequently
   }
 }
 
 void Control::statusTask() {
-  pinMode(LED_PIN, OUTPUT);  // Set LED pin as output
+  static unsigned long lastStatusTime = 0;
+
   while (true) {
+    // Process any pending LoRa operations first
+    m_LoRaCom->processOperations();
+
     int32_t rssi = m_LoRaCom->getRssi();
     String msg = String("status ") + "ID:" + deviceID +
                  " RSSI:" + String(rssi) +
                  " batteryLevel:" + String(m_batteryLevel) + " mode:" + m_mode +
                  " status:" + m_status;
-    m_serialCom->sendData(((msg + "\n").c_str()));
-    m_LoRaCom->sendMessage(msg.c_str());
 
+    // Send over serial first (this should be fast)
+    m_serialCom->sendData(((msg + "\n").c_str()));
+
+    // Try LoRa transmission with timeout protection
+    ESP_LOGD(TAG, "Starting LoRa transmission...");
+    m_LoRaCom->sendMessage(msg.c_str());
     vTaskDelay(pdMS_TO_TICKS(status_Interval));
   }
 }

@@ -17,6 +17,7 @@ class LoRaCom {
   // void sendMessage();
   void sendMessage(const char *inputmsg);  // overloaded function
   String checkForReply();
+  void processOperations();  // Process pending TX/RX operations
   int32_t getRssi();
 
   bool setOutGain(int8_t gain);
@@ -29,11 +30,18 @@ class LoRaCom {
  private:
   SX1262 *radio;
 
+  // Radio initialization status
+  bool radioInitialized = false;
+
   // Flag to indicate if an operation is done
   bool operationDone = false;
 
   // Flag to indicate transmission or reception state
   bool transmitFlag = false;
+
+  // Transmission timeout tracking
+  unsigned long transmitStartTime = 0;
+  static const unsigned long TRANSMIT_TIMEOUT_MS = 30000;  // 30 second timeout
 
   // Flag to indicate if a packet was received
   volatile bool receivedFlag = false;

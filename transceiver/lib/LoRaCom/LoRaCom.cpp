@@ -115,35 +115,87 @@ bool LoRaCom::setBandwidth(float bandwidth) {
 bool LoRaCom::begin(uint8_t CLK, uint8_t MISO, int8_t MOSI, uint8_t csPin,
                     uint8_t intPin, int8_t RST, int8_t BUSY_, float freqMHz,
                     int8_t power) {
-  //
-  radio = new SX1262(new Module(csPin, intPin, RST, BUSY_));
+  ESP_LOGI(TAG,
+           "Initializing Heltec ESP32-C3+SX1262 with pins: CLK=%d, MISO=%d, "
+           "MOSI=%d, CS=%d",
+           CLK, MISO, MOSI, csPin);
+  ESP_LOGI(TAG, "Datasheet mapping: DIO1=%d, BUSY=%d, RST=%d", intPin, BUSY_,
+           RST);
 
+  // Initialize SPI with custom pins
+  SPI.begin(10, 6, 7, 8);     // CLK, MISO, MOSI, csPin
+  SPI.setFrequency(1000000);  // Start conservative with 1MHz
+  SPI.setDataMode(SPI_MODE0);
+  SPI.setBitOrder(MSBFIRST);
+
+  ESP_LOGI(TAG, "Creating SX1262 module...");
+
+  radio = new SX1262(new Module(8, 3, 5, 4));
+
+  // Manual reset sequence is critical for SX1262
+  // ESP_LOGI(TAG, "Performing manual reset...");
+  // pinMode(RST, OUTPUT);
+  // digitalWrite(RST, LOW);
+  // delay(50);  // Longer reset pulse
+  // digitalWrite(RST, HIGH);
+  // delay(200);  // Longer startup delay
+
+  ESP_LOGI(TAG, "Starting radio initialization...");
   // carrier frequency:           915.0 MHz
-  // bandwidth:                   7.8 kHz
+  // bandwidth:                   125 kHz
   // spreading factor:            12
   // coding rate:                 5
   // sync word:                   0x34 (public network/LoRaWAN)
   // output power:                22 dBm
   // preamble length:             20 symbols
-  int state = radio->begin(freqMHz, 7.8, 12, 5, 0x34, power, 20);
+
+  // Add a watchdog timer to prevent infinite hang
+  unsigned long startTime = millis();
+  const unsigned long timeout = 5000;  // 5 second timeout
+
+  int state = radio->begin(freqMHz, 125, 12, 5, 0x34, 22, 20);
+
+  if (millis() - startTime > timeout) {
+    ESP_LOGE(TAG, "Radio initialization timed out!");
+    return false;
+  }
+
+  ESP_LOGD(TAG, "Radio begin returned state: %d", state);
 
   if (state == RADIOLIB_ERR_NONE) {
-    ESP_LOGI(TAG, "LoRaCom begin called with frequency: %.2f MHz", freqMHz);
-
-    ESP_LOGI(TAG, "LoRa radio init successful!");
+    ESP_LOGI(TAG, "LoRaCom begin success with frequency: %.2f MHz", freqMHz);
+    radioInitialized = true;
   } else {
     ESP_LOGE(TAG, "LoRa Initialisation failed with code: %d", state);
+    ESP_LOGE(TAG,
+             "Common error codes: -2=SPI_CMD_INVALID, -8=CHIP_NOT_FOUND, "
+             "-16=INVALID_FREQUENCY");
+    ESP_LOGE(TAG, "Check your wiring! CS=%d, INT=%d, RST=%d, BUSY=%d", csPin,
+             intPin, RST, BUSY_);
+    radioInitialized = false;
     return false;
   }
 
   radio->setPacketReceivedAction(setFlag);
+  radio->setPacketSentAction(setFlag);  // Also handle transmission complete
+
+  // Start listening for incoming packets
+  int rxState = radio->startReceive();
+  if (rxState == RADIOLIB_ERR_NONE) {
+    ESP_LOGI(TAG, "LoRa started listening for packets");
+  } else {
+    ESP_LOGW(TAG, "Failed to start receive mode: %d", rxState);
+  }
+
   return true;
 }
 
 void LoRaCom::setFlag(void) {
   if (instance) {
-    instance->receivedFlag = true;
-    // instance->operationDone = true;
+    instance->operationDone = true;
+    ESP_LOGD("LoRaCom", "Interrupt callback triggered - operationDone set");
+    // We'll determine if it's RX or TX in the main code by checking the radio
+    // state
   }
 }
 
@@ -185,13 +237,40 @@ void LoRaCom::setFlag(void) {
 
 void LoRaCom::sendMessage(const char *inputmsg) {
   if (inputmsg[0] != '\0') {  // Check the message is not empty
+
+    // Check if radio is properly initialized
+    if (!radioInitialized) {
+      ESP_LOGE(TAG, "Cannot send message - radio not initialized");
+      return;
+    }
+
+    // Process any pending operations first (like completed transmissions)
+    processOperations();
+
+    // Check if a transmission is already in progress
+    if (transmitFlag) {
+      ESP_LOGW(TAG, "Transmission already in progress, skipping message: [%s]",
+               inputmsg);
+      return;
+    }
+
     ESP_LOGI(TAG, "Transmitting [%s]", inputmsg);
-    int state = radio->transmit(inputmsg);  // Start the transmission process
+
+    // Set transmission flag
+    transmitFlag = true;
+    transmitStartTime = millis();  // Record when transmission started
+
+    // Use startTransmit for non-blocking operation
+    int state = radio->startTransmit(inputmsg);
 
     if (state == RADIOLIB_ERR_NONE) {
-      return;
+      ESP_LOGD(TAG, "LoRa transmission started successfully");
+      // Note: transmission will complete in background
+      // The setFlag callback will be called when done, and we should clear
+      // transmitFlag there
     } else {
-      ESP_LOGE(TAG, "LoRa send failed with code: %d", state);
+      ESP_LOGE(TAG, "LoRa send failed to start with code: %d", state);
+      transmitFlag = false;  // Clear flag on error
     }
   }
 }
@@ -200,20 +279,57 @@ void LoRaCom::sendMessage(const char *inputmsg) {
 String LoRaCom::checkForReply() {
   String message = "";
 
-  if (receivedFlag) {
-    receivedFlag = false;
+  if (operationDone) {
+    ESP_LOGD(TAG, "Processing completed operation...");
+    operationDone = false;
+
+    // Check if we were transmitting
+    if (transmitFlag) {
+      transmitFlag = false;
+      ESP_LOGI(TAG, "LoRa transmission completed successfully");
+
+      // Restart receive mode after transmission
+      int rxState = radio->startReceive();
+      if (rxState != RADIOLIB_ERR_NONE) {
+        ESP_LOGW(TAG, "Failed to restart receive mode after TX: %d", rxState);
+      } else {
+        ESP_LOGD(TAG, "Restarted receive mode after transmission");
+      }
+
+      // No message to return for transmission complete
+      return message;
+    }
+
+    // Otherwise it was a reception
     int state = radio->readData(message);
 
     if (state == RADIOLIB_ERR_NONE) {
       ESP_LOGI(TAG, "LoRa receive successful!");
+      receivedFlag = true;  // Set the old flag for compatibility
     } else {
       ESP_LOGE(TAG, "LoRa receive failed with code: %d", state);
     }
-    // ESP_LOGI(TAG, "\t RSSI [%d]", rf95->lastRssi());
-    // ESP_LOGI(TAG, "\t SNR [%d]", rf95->lastSNR());
   }
 
   return message;
+}
+
+void LoRaCom::processOperations() {
+  // Check for transmission timeout
+  if (transmitFlag && (millis() - transmitStartTime > TRANSMIT_TIMEOUT_MS)) {
+    ESP_LOGE(TAG, "Transmission timeout! Forcing reset of transmit flag");
+    transmitFlag = false;
+
+    // Try to restart receive mode
+    int rxState = radio->startReceive();
+    if (rxState != RADIOLIB_ERR_NONE) {
+      ESP_LOGW(TAG, "Failed to restart receive mode after timeout: %d",
+               rxState);
+    }
+  }
+
+  // Simply call checkForReply which handles both TX complete and RX
+  checkForReply();
 }
 
 int32_t LoRaCom::getRssi() {

@@ -157,11 +157,13 @@ void SaveFlash::readFile() {
     return;
   }
   ESP_LOGI(TAG, "Reading file: %s", fileName);
+  m_serialCom->sendData("--------------------------------\n");
   while (file.available()) {
     String line = file.readStringUntil('\n');
     line += '\n';  // Add the newline back
     m_serialCom->sendData(line.c_str());
   }
+  m_serialCom->sendData("--------------------------------\n");
   file.close();
 }
 
