@@ -9,4 +9,4 @@
 #define SPI_CS_RF 8    // GPIO8, connected to SX1262_NSS
 #define SPI_CLK_RF 10  // GPIO10, FSPICS0, connected to SX1262_SCK
 
-#define LED_PIN 2
+#define INDICATOR_LED1 2

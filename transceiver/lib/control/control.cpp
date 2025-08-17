@@ -15,8 +15,8 @@ void Control::setup() {
   ESP_LOGI(TAG, "line 15");
 
   bool loraSuccess =
-      m_LoRaCom->begin(SPI_CLK_RF, SPI_MISO_RF, SPI_MOSI_RF, SPI_CS_RF, RF_DIO,
-                       RF_RST, RF_BUSY, 915.0f, 22);
+      m_LoRaCom->begin<SX1262>(SPI_CLK_RF, SPI_MISO_RF, SPI_MOSI_RF, SPI_CS_RF,
+                               RF_DIO, RF_RST, 915.0f, 22, RF_BUSY);
 
   if (!loraSuccess) {
     ESP_LOGE(TAG,
@@ -58,18 +58,18 @@ void Control::begin() {
   // Higher priority = higher number, priorities should be 1-3 for user tasks
   xTaskCreate(
       [](void *param) { static_cast<Control *>(param)->serialDataTask(); },
-      "SerialDataTask", 4096, this, 2, &SerialTaskHandle);
+      "SerialDataTask", 8192, this, 2, &SerialTaskHandle);
 
   xTaskCreate(
       [](void *param) { static_cast<Control *>(param)->loRaDataTask(); },
-      "LoRaDataTask", 4096, this, 2, &LoRaTaskHandle);
+      "LoRaDataTask", 8192, this, 2, &LoRaTaskHandle);
 
   xTaskCreate([](void *param) { static_cast<Control *>(param)->statusTask(); },
-              "StatusTask", 4096, this, 1, &StatusTaskHandle);
+              "StatusTask", 8192, this, 1, &StatusTaskHandle);
 
   xTaskCreate(
       [](void *param) { static_cast<Control *>(param)->heartBeatTask(); },
-      "HeartBeatTask", 1024, this, 1, &heartBeatTaskHandle);
+      "HeartBeatTask", 2048, this, 1, &heartBeatTaskHandle);
 
   ESP_LOGI(TAG, "Control begun!\n");
 
@@ -77,10 +77,10 @@ void Control::begin() {
 }
 
 void Control::heartBeatTask() {
-  pinMode(LED_PIN, OUTPUT);  // Set LED pin as output
+  pinMode(INDICATOR_LED1, OUTPUT);  // Set LED pin as output
   while (true) {
-    digitalWrite(LED_PIN, !digitalRead(LED_PIN));
-    ESP_LOGD(TAG, "LED toggled");
+    digitalWrite(INDICATOR_LED1, !digitalRead(INDICATOR_LED1));
+    // ESP_LOGD(TAG, "LED toggled");
     vTaskDelay(pdMS_TO_TICKS(heartBeat_Interval));
   }
 }
@@ -93,7 +93,7 @@ void Control::serialDataTask() {
     // Check for incoming data from the serial interface
     if (m_serialCom->getData(buffer, sizeof(buffer), &rxIndex)) {
       ESP_LOGI(TAG, "Received: %s", buffer);  // Log the received data
-      interpretMessage(buffer);               // Process the message
+      interpretMessage(buffer, true);         // Process the message
       // clear the buffer for the next message
       memset(buffer, 0, sizeof(buffer));
       rxIndex = 0;  // Reset the index
@@ -110,9 +110,9 @@ void Control::loRaDataTask() {
 
   while (true) {
     // Check for incoming data from the LoRa interface
-    if (m_LoRaCom->getData(buffer, sizeof(buffer), &rxIndex)) {
-      ESP_LOGI(TAG, "Received: %s", buffer);  // Log the received data
-      interpretMessage(buffer);               // Process the message
+    if (m_LoRaCom->getMessage(buffer, sizeof(buffer))) {
+      ESP_LOGD(TAG, "Received: %s", buffer);  // Log the received data
+      interpretMessage(buffer, false);        // Process the message
       // Send the received data over serial
       m_serialCom->sendData("Received: <");
       m_serialCom->sendData(buffer);
@@ -123,8 +123,7 @@ void Control::loRaDataTask() {
     }
 
     // Use a small delay instead of yield() to be more cooperative
-    vTaskDelay(pdMS_TO_TICKS(
-        50));  // 50ms delay - LoRa doesn't need to be checked as frequently
+    vTaskDelay(pdMS_TO_TICKS(10));
   }
 }
 
@@ -133,7 +132,7 @@ void Control::statusTask() {
 
   while (true) {
     // Process any pending LoRa operations first
-    m_LoRaCom->processOperations();
+    // m_LoRaCom->processOperations();
 
     int32_t rssi = m_LoRaCom->getRssi();
     String msg = String("status ") + "ID:" + deviceID +
@@ -145,13 +144,13 @@ void Control::statusTask() {
     m_serialCom->sendData(((msg + "\n").c_str()));
 
     // Try LoRa transmission with timeout protection
-    ESP_LOGD(TAG, "Starting LoRa transmission...");
+    // ESP_LOGD(TAG, "Starting LoRa transmission...");
     m_LoRaCom->sendMessage(msg.c_str());
     vTaskDelay(pdMS_TO_TICKS(status_Interval));
   }
 }
 
-void Control::interpretMessage(const char *buffer) {
+void Control::interpretMessage(const char *buffer, bool relayMsgLoRa) {
   m_commander->setCommand(buffer);  // Set the command in the commander
   char *token = m_commander->readAndRemove();
 
@@ -160,8 +159,14 @@ void Control::interpretMessage(const char *buffer) {
   // eg: "data <payload>"
 
   if (c_cmp(token, "command")) {
-    // send to other devices to sync parameters
-    m_LoRaCom->sendMessage(buffer);
+    if (relayMsgLoRa) {
+      // send to other devices to sync parameters
+      m_LoRaCom->sendMessage(buffer);
+      while (m_LoRaCom->checkTxMode()) {
+        // wait for LoRa to finish transmitting
+        vTaskDelay(pdMS_TO_TICKS(10));  // Wait for LoRa transmission
+      }
+    }
     // should probably wait for a success reply before changing THIS device
     ESP_LOGD(TAG, "Processing command: %s", buffer);
     m_commander->checkCommand();

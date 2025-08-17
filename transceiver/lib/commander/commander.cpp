@@ -15,6 +15,10 @@ void Commander::handle_update_help() {
   handle_help(update_handler);  // Call the generic help handler
 }
 
+void Commander::handle_set_help() {
+  handle_help(set_handler);  // Call the generic help handler
+}
+
 void Commander::handle_help(const HandlerMap* handler) {
   String helpText = "\nAvailable commands:\n";
   for (const HandlerMap* cmd = handler; cmd->name != nullptr; ++cmd) {
@@ -27,6 +31,11 @@ void Commander::handle_help(const HandlerMap* handler) {
 void Commander::handle_update() {
   ESP_LOGD(TAG, "Update command executed");
   checkCommand(update_handler);
+}
+
+void Commander::handle_set() {
+  ESP_LOGD(TAG, "Set command executed");
+  checkCommand(set_handler);  // Check and run the set command
 }
 
 void Commander::handle_update_gain() {
@@ -90,6 +99,25 @@ void Commander::handle_update_bandwidthKHz() {
   float bandwidthKhz = static_cast<float>(atof(data));  // Cast to float
   m_loraCom->setBandwidth(bandwidthKhz);  // Set the gain in LoRaCom
 }
+#ifdef SFTU
+void Commander::handle_set_OUTPUT() {
+  ESP_LOGD(TAG, "Set output command executing");
+  char* data = readAndRemove();  // Read and remove the command token
+
+  // convert to integer
+  if (data == nullptr) {
+    ESP_LOGW(TAG, "Empty data received for output set, expecting <uint8_t>");
+    return;
+  }
+
+  bool state = ((atoi(data)) == 1) ? true : false;
+  ESP_LOGI(TAG, "Setting output to %s", state ? "ON" : "OFF");
+}
+#else
+void Commander::handle_set_OUTPUT() {
+  ESP_LOGD(TAG, "Command not implemented for this build");
+}
+#endif
 
 void Commander::handle_mode() {
   // Implementation for mode command

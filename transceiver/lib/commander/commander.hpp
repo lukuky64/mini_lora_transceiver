@@ -31,6 +31,7 @@ class Commander {
   // ----- Command Handlers -----
   void handle_command_help();  // Command handler for "help"
   void handle_update();        // Command handler for "update" parameters
+  void handle_set();           // Command handler for "set" parameters
   void handle_mode();  // Command handler for "mode" (eg: transmit, receive,
                        // transcieve, spectrum scan, etc")
 
@@ -42,11 +43,15 @@ class Commander {
                                          // spreading factor"
   void handle_update_bandwidthKHz();  // Command handler for "update bandwidth"
 
+  void handle_set_help();
+  void handle_set_OUTPUT();
+
   void handle_help(const HandlerMap *handler);
 
-  static constexpr const HandlerMap command_handler[4] = {
+  static constexpr const HandlerMap command_handler[5] = {
       {"help", &Commander::handle_command_help},
       {"update", &Commander::handle_update},
+      {"set", &Commander::handle_set},
       {"mode", &Commander::handle_mode},
       {nullptr, nullptr}};
 
@@ -56,6 +61,11 @@ class Commander {
       {"freqMhz", &Commander::handle_update_freqMhz},
       {"sf", &Commander::handle_update_spreadingFactor},
       {"bwKHz", &Commander::handle_update_bandwidthKHz},
+      {nullptr, nullptr}};
+
+  static constexpr const HandlerMap set_handler[3] = {
+      {"help", &Commander::handle_set_help},
+      {"output", &Commander::handle_set_OUTPUT},
       {nullptr, nullptr}};
 
   void runMappedCommand(char *command, const HandlerMap *handler);

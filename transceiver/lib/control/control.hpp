@@ -4,13 +4,13 @@
 
 #include <cstring>
 
+#include "../pin_defs.hpp"
 #include "LoRaCom.hpp"
 #include "SerialCom.hpp"
 #include "commander.hpp"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "pin_defs.hpp"
 #include "saveFlash.hpp"
 
 #define c_cmp(a, b) (strcmp(a, b) == 0)
@@ -53,7 +53,7 @@ class Control {
 
   unsigned long serial_Interval = 100;
   unsigned long lora_Interval = 100;
-  unsigned long status_Interval = 5'000;
+  unsigned long status_Interval = 10'000;
   unsigned long heartBeat_Interval = 250;
 
   static constexpr const char *TAG = "Control";
@@ -68,7 +68,7 @@ class Control {
   void statusTask();
   void heartBeatTask();
 
-  void interpretMessage(const char *buffer);
+  void interpretMessage(const char *buffer, bool relayMsgLoRa = true);
   void processData(const char *buffer);
 
   String deviceID = "transceiver";  // Unique identifier for the device

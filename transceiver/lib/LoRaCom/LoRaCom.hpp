@@ -10,53 +10,57 @@
 class LoRaCom {
  public:
   LoRaCom();
-  bool begin(uint8_t CLK, uint8_t MISO, int8_t MOSI, uint8_t csPin,
-             uint8_t intPin, int8_t RST, int8_t BUSY_, float freqMHz,
-             int8_t power);
-  // bool createMessage();
-  // void sendMessage();
-  void sendMessage(const char *inputmsg);  // overloaded function
-  String checkForReply();
-  void processOperations();  // Process pending TX/RX operations
+
+  template <typename RadioType>
+  bool begin(uint8_t CLK, uint8_t MISO, uint8_t MOSI, uint8_t csPin,
+             uint8_t intPin, uint8_t RST, float freqMHz, int8_t power,
+             int8_t BUSY = -1) {
+    SPI.begin(CLK, MISO, MOSI, csPin);
+
+    radio = new RadioType((BUSY == -1) ? new Module(csPin, intPin, RST)
+                                       : new Module(csPin, intPin, RST, BUSY));
+
+    int state = static_cast<RadioType *>(radio)->begin(freqMHz, 500, 7, 5, 0x34,
+                                                       power, 20);
+
+    radio->setPacketReceivedAction(RxTxCallback);
+    // radio->setPacketSentAction(TxCallback);
+
+    state |= radio->startReceive();
+    if (state == RADIOLIB_ERR_NONE) {
+      ESP_LOGI(TAG, "LoRa initialised successfully!");
+      radioInitialised = true;
+      return true;
+    } else {
+      ESP_LOGE(TAG, "LoRa initialisation FAILED! Code: %d", state);
+      return false;
+    }
+  }
+
+  void sendMessage(const char *msg);  // overloaded function
+  bool getMessage(char *buffer, size_t len);
   int32_t getRssi();
 
   bool setOutGain(int8_t gain);
   bool setFrequency(float freqMHz);
-  bool setSpreadingFactor(uint8_t spreadingFactor);
-  bool setBandwidth(float bandwidth);
 
-  bool getData(char *buffer, const size_t bufferSize, int *_rxIndex);
+  // not supported for the physical layer
+  bool setSpreadingFactor(uint8_t spreadingFactor) { return false; }
+  bool setBandwidth(float bandwidth) { return false; }
+
+  bool checkTxMode();
 
  private:
-  SX1262 *radio;
+  PhysicalLayer *radio;
+  inline static LoRaCom *instance = nullptr;
 
-  // Radio initialization status
-  bool radioInitialized = false;
+  bool radioInitialised = false;
 
-  // Flag to indicate if an operation is done
-  bool operationDone = false;
+  volatile bool RxFlag = false;
 
-  // Flag to indicate transmission or reception state
-  bool transmitFlag = false;
+  volatile bool TxMode = false;
 
-  // Transmission timeout tracking
-  unsigned long transmitStartTime = 0;
-  static const unsigned long TRANSMIT_TIMEOUT_MS = 30000;  // 30 second timeout
-
-  // Flag to indicate if a packet was received
-  volatile bool receivedFlag = false;
-
-  // save transmission states between loops
-  int transmissionState = RADIOLIB_ERR_NONE;
-
-  static const int MAX_INPUT_LENGTH = 128;
-  char inputArray[MAX_INPUT_LENGTH];
-
-  int INT_PIN;
-  int CS_PIN;
-  float RF95_FREQ;
-
-  static void setFlag(void);
+  static void RxTxCallback(void);
 
   static constexpr const char *TAG = "LORA_COMM";
 };
